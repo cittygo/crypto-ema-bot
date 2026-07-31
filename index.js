@@ -8,7 +8,7 @@ const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
 const exchange = new ccxt.binance({
-    'options': { 'defaultType': 'future' },
+    'options': { 'defaultType': 'swap' }, // Changed from 'future' to 'swap' for Perpetuals
     'enableRateLimit': true
 });
 
@@ -16,21 +16,30 @@ const timeframes = ['15m', '1h', '4h', '1d'];
 
 async function getFilteredPerpPairs() {
     try {
-        await exchange.loadMarkets();
+        console.log("Loading Binance Markets...");
+        const markets = await exchange.loadMarkets();
         const tickers = await exchange.fetchTickers();
         let filteredSymbols = [];
         
+        console.log(`Total symbols found on Binance: ${Object.keys(tickers).length}`);
+
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
+            const market = markets[symbol];
             
-            // Fixed Filter: Check if symbol contains USDT and price < 10
-            // Also adding a minimum volume filter of 5M to get active coins like in your screenshot
-            if (symbol.includes('USDT') && ticker.last < 10 && ticker.quoteVolume > 5000000) {
-                filteredSymbols.push(symbol);
+            // Broad Filter: 
+            // 1. USDT based
+            // 2. Price < 10
+            // 3. Volume > 1M (Reduced from 5M to find more coins)
+            if (symbol.includes('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
+                if (market && (market.swap || market.type === 'swap')) {
+                    filteredSymbols.push(symbol);
+                }
             }
         }
         
-        // Sorting by volume to get the most active coins first
+        // Sorting by Volume (High to Low) and picking top 50
+        filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
         return filteredSymbols.slice(0, 50); 
     } catch (e) {
         console.error("Filter Error:", e.message);
@@ -52,8 +61,6 @@ async function analyzeCoin(symbol, timeframe) {
         const rsiArray = RSI.calculate({ period: 14, values: closePrices });
         const lastRsi = rsiArray[rsiArray.length - 1];
 
-        if (!lastEma20) return;
-
         let side = "";
         let emoji = "";
 
@@ -66,8 +73,10 @@ async function analyzeCoin(symbol, timeframe) {
         }
 
         if (side) {
+            // Clean the symbol name for display (e.g., BTC/USDT:USDT -> BTCUSDT)
             const cleanSymbol = symbol.split(':')[0].replace('/', '');
             const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}P`;
+            
             const message = `
 ${emoji} *${side}*
 --------------------------
@@ -81,7 +90,9 @@ ${emoji} *${side}*
             `;
             await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         }
-    } catch (e) {}
+    } catch (e) {
+        // Silently handle errors for specific symbols
+    }
 }
 
 async function run() {
@@ -90,11 +101,12 @@ async function run() {
         const totalCoins = coins.length;
 
         if (totalCoins === 0) {
-            await bot.sendMessage(chatId, "⚠️ Still no coins found. Please check API connection.");
+            console.log("No coins found matching criteria.");
+            await bot.sendMessage(chatId, "⚠️ No coins found matching the criteria. Bot is still running but found 0 matches.");
             return;
         }
 
-        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nFound *${totalCoins}* Active USDT-Perp coins\nPrice < $10 | Vol > 5M\nScanning...`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nScanning *${totalCoins}* Active coins\n(Price < $10 | Vol > 1M)\nChecking timeframes...`, { parse_mode: 'Markdown' });
 
         for (const tf of timeframes) {
             for (const coin of coins) {
@@ -105,7 +117,7 @@ async function run() {
         
         await bot.sendMessage(chatId, "✅ *Scan Completed Successfully.*", { parse_mode: 'Markdown' });
     } catch (error) {
-        console.error("Run Error:", error.message);
+        console.error("Critical Error:", error.message);
     }
 }
 

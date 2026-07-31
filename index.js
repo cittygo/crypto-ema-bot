@@ -7,7 +7,7 @@ const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
-// We use Bitget for data to bypass Binance's GitHub IP block
+// Using Bitget for data (bypass GitHub IP block)
 const exchange = new ccxt.bitget({
     'options': { 'defaultType': 'swap' },
     'enableRateLimit': true
@@ -22,6 +22,7 @@ async function getFilteredPerpPairs() {
         
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
+            // Filter: USDT Perpetual, Price < 10, Volume > 1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
@@ -61,14 +62,15 @@ async function analyzeCoin(symbol, timeframe) {
         }
 
         if (side) {
-            // Updated: Logic to create Binance TradingView link
-            const baseSymbol = symbol.replace('USDT', '').replace('/', '');
-            const binanceChartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${baseSymbol}USDT.P`;
+            // FIX: Get base name only (e.g., from EPIC/USDT:USDT take EPIC)
+            const baseAsset = symbol.split('/')[0]; 
+            // Correct Format: BINANCE:EPICUSDT.P
+            const binanceChartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${baseAsset}USDT.P`;
             
             const message = `
 ${emoji} *${side}*
 --------------------------
-🪙 *Coin:* #${baseSymbol}
+🪙 *Coin:* #${baseAsset}
 ⏰ *Timeframe:* ${timeframe}
 💰 *Price:* ${lastPrice}
 📊 *RSI:* ${lastRsi ? lastRsi.toFixed(2) : 'N/A'}

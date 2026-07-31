@@ -7,9 +7,9 @@ const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
-// Switching to Bitget as they are more lenient with GitHub/AWS IPs
+// We use Bitget for data to bypass Binance's GitHub IP block
 const exchange = new ccxt.bitget({
-    'options': { 'defaultType': 'swap' }, // USDT Perpetual
+    'options': { 'defaultType': 'swap' },
     'enableRateLimit': true
 });
 
@@ -17,24 +17,18 @@ const timeframes = ['15m', '1h', '4h', '1d'];
 
 async function getFilteredPerpPairs() {
     try {
-        console.log("Fetching Bitget Markets...");
         const tickers = await exchange.fetchTickers();
         let filteredSymbols = [];
         
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
-            
-            // Filter: USDT Perpetual, Price < 10, Volume > 1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
-        
-        // Sorting by Volume and picking top 60
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
         return filteredSymbols.slice(0, 60); 
     } catch (e) {
-        console.error("Filter Error:", e.message);
         return [];
     }
 }
@@ -67,20 +61,20 @@ async function analyzeCoin(symbol, timeframe) {
         }
 
         if (side) {
-            // Chart link for TradingView (Bitget specific)
-            const cleanSymbol = symbol.replace('USDT', '');
-            const chartUrl = `https://www.tradingview.com/chart/?symbol=BITGET:${cleanSymbol}USDT.P`;
+            // Updated: Logic to create Binance TradingView link
+            const baseSymbol = symbol.replace('USDT', '').replace('/', '');
+            const binanceChartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${baseSymbol}USDT.P`;
             
             const message = `
-${emoji} *${side} (Bitget)*
+${emoji} *${side}*
 --------------------------
-🪙 *Coin:* #${cleanSymbol}
+🪙 *Coin:* #${baseSymbol}
 ⏰ *Timeframe:* ${timeframe}
 💰 *Price:* ${lastPrice}
 📊 *RSI:* ${lastRsi ? lastRsi.toFixed(2) : 'N/A'}
 📉 *EMA 20:* ${lastEma20.toFixed(4)}
 --------------------------
-🔗 [Open Chart](${chartUrl})
+🔗 [Open Chart on Binance](${binanceChartUrl})
             `;
             await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         }
@@ -92,23 +86,20 @@ async function run() {
         const coins = await getFilteredPerpPairs();
         const totalCoins = coins.length;
 
-        if (totalCoins === 0) {
-            console.log("No coins found on Bitget.");
-            return;
-        }
+        if (totalCoins === 0) return;
 
-        await bot.sendMessage(chatId, `🔍 *Bitget Scanner Started*\nFound *${totalCoins}* Active coins\nPrice < $10 | Vol > 1M\nScanning timeframes...`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `🔍 *Market Scanner Started*\nChecking *${totalCoins}* coins\nTargeting Binance Charts...`, { parse_mode: 'Markdown' });
 
         for (const tf of timeframes) {
             for (const coin of coins) {
                 await analyzeCoin(coin, tf);
-                await new Promise(res => setTimeout(res, 300));
+                await new Promise(res => setTimeout(res, 400));
             }
         }
         
         await bot.sendMessage(chatId, "✅ *Scan Completed Successfully.*");
     } catch (error) {
-        console.error("Critical Error:", error.message);
+        console.error("Run Error:", error.message);
     }
 }
 

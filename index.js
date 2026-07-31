@@ -1,6 +1,6 @@
 import ccxt from 'ccxt';
 import pkg from 'technicalindicators';
-const { EMA } = pkg;
+const { EMA, RSI } = pkg;
 import TelegramBot from 'node-telegram-bot-api';
 
 const token = process.env.TELEGRAM_TOKEN;
@@ -12,8 +12,7 @@ const exchange = new ccxt.binance({
     'enableRateLimit': true
 });
 
-// Timeframes requested by you
-const timeframes = ['15m', '30m', '1h', '2h', '4h', '1d', '1w'];
+const timeframes = ['15m', '1h', '4h', '1d'];
 
 async function getFilteredPerpPairs() {
     try {
@@ -25,8 +24,11 @@ async function getFilteredPerpPairs() {
             const ticker = tickers[symbol];
             const market = markets[symbol];
             
-            // Filter: USDT Perp, Price < 10 USDT, Active Market
-            if (symbol.endsWith('/USDT') && market.type === 'swap' && ticker.last < 10 && market.active) {
+            if (symbol.endsWith('/USDT') && 
+                market.type === 'swap' && 
+                ticker.last < 10 && 
+                ticker.quoteVolume > 10000000 &&
+                market.active) {
                 filteredSymbols.push(symbol);
             }
         }
@@ -38,8 +40,8 @@ async function getFilteredPerpPairs() {
 
 async function analyzeCoin(symbol, timeframe) {
     try {
-        const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 50);
-        if (candles.length < 21) return;
+        const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
+        if (candles.length < 50) return;
 
         const closePrices = candles.map(c => c[4]);
         const lastPrice = closePrices[closePrices.length - 1];
@@ -47,48 +49,53 @@ async function analyzeCoin(symbol, timeframe) {
         const ema20Array = EMA.calculate({ period: 20, values: closePrices });
         const lastEma20 = ema20Array[ema20Array.length - 1];
 
-        let signal = "";
-        
-        // Buy if Close is above 20 EMA
+        const rsiArray = RSI.calculate({ period: 14, values: closePrices });
+        const lastRsi = rsiArray[rsiArray.length - 1];
+
+        let side = "";
+        let emoji = "";
+
         if (lastPrice > lastEma20) {
-            signal = "🚀 BULLISH (Close > 20 EMA)";
-        } 
-        // Sell if Close is below 20 EMA
-        else if (lastPrice < lastEma20) {
-            signal = "🔻 BEARISH (Close < 20 EMA)";
+            side = "LONG Opportunity";
+            emoji = "🟢";
+        } else if (lastPrice < lastEma20) {
+            side = "SHORT Opportunity";
+            emoji = "🔴";
         }
 
-        if (signal) {
+        if (side) {
+            const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${symbol.replace('/', '')}P`;
             const message = `
-Signal Alert!
-Coin: ${symbol}
-Timeframe: ${timeframe}
-Price: ${lastPrice}
-EMA 20: ${lastEma20.toFixed(4)}
-Status: ${signal}
+${emoji} *${side}*
+--------------------------
+🪙 *Coin:* #${symbol.replace('/USDT', '')}
+⏰ *Timeframe:* ${timeframes.includes(timeframe) ? timeframe : 'N/A'}
+💰 *Price:* ${lastPrice}
+📊 *RSI:* ${lastRsi.toFixed(2)}
+📉 *EMA 20:* ${lastEma20.toFixed(4)}
+--------------------------
+🔗 [Open Chart on TradingView](${chartUrl})
             `;
-            await bot.sendMessage(chatId, message);
+            await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         }
-    } catch (e) {
-        // Handle errors silently
-    }
+    } catch (e) {}
 }
 
 async function run() {
     try {
-        await bot.sendMessage(chatId, "Scanner Started: Checking all timeframes for 20 EMA strategy...");
-        
         const coins = await getFilteredPerpPairs();
-        
+        const totalCoins = coins.length;
+
+        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nFound *${totalCoins}* USDT-Perp coins\nPrice < $10 | Vol > 10M\nChecking all timeframes...`, { parse_mode: 'Markdown' });
+
         for (const tf of timeframes) {
             for (const coin of coins) {
                 await analyzeCoin(coin, tf);
-                // 300ms delay to avoid API rate limits
-                await new Promise(resolve => setTimeout(resolve, 300));
+                await new Promise(res => setTimeout(res, 300));
             }
         }
         
-        await bot.sendMessage(chatId, "Scan Completed.");
+        await bot.sendMessage(chatId, "✅ *Scan Completed Successfully.*", { parse_mode: 'Markdown' });
     } catch (error) {
         console.error("Run Error:", error.message);
     }

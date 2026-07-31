@@ -16,32 +16,22 @@ const timeframes = ['15m', '1h', '4h', '1d'];
 
 async function getFilteredPerpPairs() {
     try {
-        console.log("Loading markets and tickers...");
+        await exchange.loadMarkets();
         const tickers = await exchange.fetchTickers();
-        const markets = await exchange.loadMarkets();
         let filteredSymbols = [];
         
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
-            const market = markets[symbol];
             
-            // Check if ticker and market info exists
-            if (!ticker || !market) continue;
-
-            // Simplified Filter: 
-            // 1. Symbol must end with /USDT:
-            // 2. Market must be 'swap' (Perpetual)
-            // 3. Price < 10 USDT
-            // 4. 24h Volume > 5 Million USDT (Lowered for better results)
-            if (symbol.endsWith('/USDT') && 
-                market.type === 'swap' && 
-                ticker.last < 10 && 
-                ticker.quoteVolume > 5000000 && 
-                market.active) {
+            // Fixed Filter: Check if symbol contains USDT and price < 10
+            // Also adding a minimum volume filter of 5M to get active coins like in your screenshot
+            if (symbol.includes('USDT') && ticker.last < 10 && ticker.quoteVolume > 5000000) {
                 filteredSymbols.push(symbol);
             }
         }
-        return filteredSymbols;
+        
+        // Sorting by volume to get the most active coins first
+        return filteredSymbols.slice(0, 50); 
     } catch (e) {
         console.error("Filter Error:", e.message);
         return [];
@@ -62,7 +52,7 @@ async function analyzeCoin(symbol, timeframe) {
         const rsiArray = RSI.calculate({ period: 14, values: closePrices });
         const lastRsi = rsiArray[rsiArray.length - 1];
 
-        if (!lastEma20 || !lastRsi) return;
+        if (!lastEma20) return;
 
         let side = "";
         let emoji = "";
@@ -76,14 +66,15 @@ async function analyzeCoin(symbol, timeframe) {
         }
 
         if (side) {
-            const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${symbol.replace('/', '')}P`;
+            const cleanSymbol = symbol.split(':')[0].replace('/', '');
+            const chartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${cleanSymbol}P`;
             const message = `
 ${emoji} *${side}*
 --------------------------
-🪙 *Coin:* #${symbol.replace('/USDT', '')}
+🪙 *Coin:* #${cleanSymbol.replace('USDT', '')}
 ⏰ *Timeframe:* ${timeframe}
 💰 *Price:* ${lastPrice}
-📊 *RSI:* ${lastRsi.toFixed(2)}
+📊 *RSI:* ${lastRsi ? lastRsi.toFixed(2) : 'N/A'}
 📉 *EMA 20:* ${lastEma20.toFixed(4)}
 --------------------------
 🔗 [Open Chart](${chartUrl})
@@ -99,16 +90,16 @@ async function run() {
         const totalCoins = coins.length;
 
         if (totalCoins === 0) {
-            await bot.sendMessage(chatId, "⚠️ *No coins found* matching the criteria (Price < $10 & Vol > 5M). Adjusting filters might help.");
+            await bot.sendMessage(chatId, "⚠️ Still no coins found. Please check API connection.");
             return;
         }
 
-        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nFound *${totalCoins}* USDT-Perp coins\nPrice < $10 | Vol > 5M\nChecking timeframes...`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nFound *${totalCoins}* Active USDT-Perp coins\nPrice < $10 | Vol > 5M\nScanning...`, { parse_mode: 'Markdown' });
 
         for (const tf of timeframes) {
             for (const coin of coins) {
                 await analyzeCoin(coin, tf);
-                await new Promise(res => setTimeout(res, 500)); // Increased delay for stability
+                await new Promise(res => setTimeout(res, 500));
             }
         }
         

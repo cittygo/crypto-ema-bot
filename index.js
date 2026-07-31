@@ -7,7 +7,7 @@ const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
-// Using Bitget for data (bypass GitHub IP block)
+// Using Bitget as it supports cloud server IPs (unlike Binance)
 const exchange = new ccxt.bitget({
     'options': { 'defaultType': 'swap' },
     'enableRateLimit': true
@@ -22,16 +22,15 @@ async function getFilteredPerpPairs() {
         
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
-            // Filter: USDT Perpetual, Price < 10, Volume > 1M
+            // Condition: USDT pair, Price < $10, 24h Volume > $1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
+        // Sort by volume and pick TOP 100 coins
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
-        return filteredSymbols.slice(0, 60); 
-    } catch (e) {
-        return [];
-    }
+        return filteredSymbols.slice(0, 100); 
+    } catch (e) { return []; }
 }
 
 async function analyzeCoin(symbol, timeframe) {
@@ -48,35 +47,38 @@ async function analyzeCoin(symbol, timeframe) {
         const rsiArray = RSI.calculate({ period: 14, values: closePrices });
         const lastRsi = rsiArray[rsiArray.length - 1];
 
-        if (!lastEma20) return;
+        if (!lastEma20 || !lastRsi) return;
 
         let side = "";
         let emoji = "";
+        let entryQuality = "";
 
+        // Strategy: EMA 20 + RSI Filter
         if (lastPrice > lastEma20) {
+            if (lastRsi > 70) return; // Avoid Overbought
             side = "LONG Opportunity";
             emoji = "🟢";
-        } else if (lastPrice < lastEma20) {
+            if (lastRsi >= 30 && lastRsi <= 45) entryQuality = "🔥 BEST LONG ENTRY (RSI 30-45)";
+        } 
+        else if (lastPrice < lastEma20) {
+            if (lastRsi < 30) return; // Avoid Oversold
             side = "SHORT Opportunity";
             emoji = "🔴";
+            if (lastRsi >= 55 && lastRsi <= 70) entryQuality = "🔥 BEST SHORT ENTRY (RSI 55-70)";
         }
 
         if (side) {
-            // FIX: Get base name only (e.g., from EPIC/USDT:USDT take EPIC)
             const baseAsset = symbol.split('/')[0]; 
-            // Correct Format: BINANCE:EPICUSDT.P
             const binanceChartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${baseAsset}USDT.P`;
             
             const message = `
 ${emoji} *${side}*
---------------------------
+${entryQuality ? entryQuality + '\n' : ''}--------------------------
 🪙 *Coin:* #${baseAsset}
-⏰ *Timeframe:* ${timeframe}
-💰 *Price:* ${lastPrice}
-📊 *RSI:* ${lastRsi ? lastRsi.toFixed(2) : 'N/A'}
-📉 *EMA 20:* ${lastEma20.toFixed(4)}
+⏰ *TF:* ${timeframe} | 💰 *Price:* ${lastPrice}
+📊 *RSI:* ${lastRsi.toFixed(2)} | 📉 *EMA20:* ${lastEma20.toFixed(4)}
 --------------------------
-🔗 [Open Chart on Binance](${binanceChartUrl})
+🔗 [Open Binance Chart](${binanceChartUrl})
             `;
             await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         }
@@ -86,11 +88,9 @@ ${emoji} *${side}*
 async function run() {
     try {
         const coins = await getFilteredPerpPairs();
-        const totalCoins = coins.length;
+        if (coins.length === 0) return;
 
-        if (totalCoins === 0) return;
-
-        await bot.sendMessage(chatId, `🔍 *Market Scanner Started*\nChecking *${totalCoins}* coins\nTargeting Binance Charts...`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nScanning *${coins.length}* coins (Top Vol)\nTimeframes: ${timeframes.join(', ')}`, { parse_mode: 'Markdown' });
 
         for (const tf of timeframes) {
             for (const coin of coins) {
@@ -98,11 +98,8 @@ async function run() {
                 await new Promise(res => setTimeout(res, 400));
             }
         }
-        
-        await bot.sendMessage(chatId, "✅ *Scan Completed Successfully.*");
-    } catch (error) {
-        console.error("Run Error:", error.message);
-    }
+        await bot.sendMessage(chatId, "✅ *Scan Completed.*");
+    } catch (error) { console.error(error.message); }
 }
 
 run();

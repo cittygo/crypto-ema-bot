@@ -1,6 +1,7 @@
-const ccxt = require('ccxt');
-const { EMA } = require('technicalindicators');
-const TelegramBot = require('node-telegram-bot-api');
+import ccxt from 'ccxt';
+import pkg from 'technicalindicators';
+const { EMA } = pkg;
+import TelegramBot from 'node-telegram-bot-api';
 
 const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;

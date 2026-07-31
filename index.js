@@ -16,6 +16,7 @@ const timeframes = ['15m', '1h', '4h', '1d'];
 
 async function getFilteredPerpPairs() {
     try {
+        console.log("Loading markets and tickers...");
         const tickers = await exchange.fetchTickers();
         const markets = await exchange.loadMarkets();
         let filteredSymbols = [];
@@ -24,16 +25,25 @@ async function getFilteredPerpPairs() {
             const ticker = tickers[symbol];
             const market = markets[symbol];
             
+            // Check if ticker and market info exists
+            if (!ticker || !market) continue;
+
+            // Simplified Filter: 
+            // 1. Symbol must end with /USDT:
+            // 2. Market must be 'swap' (Perpetual)
+            // 3. Price < 10 USDT
+            // 4. 24h Volume > 5 Million USDT (Lowered for better results)
             if (symbol.endsWith('/USDT') && 
                 market.type === 'swap' && 
                 ticker.last < 10 && 
-                ticker.quoteVolume > 10000000 &&
+                ticker.quoteVolume > 5000000 && 
                 market.active) {
                 filteredSymbols.push(symbol);
             }
         }
         return filteredSymbols;
     } catch (e) {
+        console.error("Filter Error:", e.message);
         return [];
     }
 }
@@ -52,6 +62,8 @@ async function analyzeCoin(symbol, timeframe) {
         const rsiArray = RSI.calculate({ period: 14, values: closePrices });
         const lastRsi = rsiArray[rsiArray.length - 1];
 
+        if (!lastEma20 || !lastRsi) return;
+
         let side = "";
         let emoji = "";
 
@@ -69,12 +81,12 @@ async function analyzeCoin(symbol, timeframe) {
 ${emoji} *${side}*
 --------------------------
 🪙 *Coin:* #${symbol.replace('/USDT', '')}
-⏰ *Timeframe:* ${timeframes.includes(timeframe) ? timeframe : 'N/A'}
+⏰ *Timeframe:* ${timeframe}
 💰 *Price:* ${lastPrice}
 📊 *RSI:* ${lastRsi.toFixed(2)}
 📉 *EMA 20:* ${lastEma20.toFixed(4)}
 --------------------------
-🔗 [Open Chart on TradingView](${chartUrl})
+🔗 [Open Chart](${chartUrl})
             `;
             await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         }
@@ -86,12 +98,17 @@ async function run() {
         const coins = await getFilteredPerpPairs();
         const totalCoins = coins.length;
 
-        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nFound *${totalCoins}* USDT-Perp coins\nPrice < $10 | Vol > 10M\nChecking all timeframes...`, { parse_mode: 'Markdown' });
+        if (totalCoins === 0) {
+            await bot.sendMessage(chatId, "⚠️ *No coins found* matching the criteria (Price < $10 & Vol > 5M). Adjusting filters might help.");
+            return;
+        }
+
+        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nFound *${totalCoins}* USDT-Perp coins\nPrice < $10 | Vol > 5M\nChecking timeframes...`, { parse_mode: 'Markdown' });
 
         for (const tf of timeframes) {
             for (const coin of coins) {
                 await analyzeCoin(coin, tf);
-                await new Promise(res => setTimeout(res, 300));
+                await new Promise(res => setTimeout(res, 500)); // Increased delay for stability
             }
         }
         

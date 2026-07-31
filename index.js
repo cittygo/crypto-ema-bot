@@ -7,9 +7,9 @@ const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
-// Switching to Bybit because Binance blocks GitHub servers
-const exchange = new ccxt.bybit({
-    'options': { 'defaultType': 'linear' }, // Bybit Linear USDT Perpetual
+// Switching to Bitget as they are more lenient with GitHub/AWS IPs
+const exchange = new ccxt.bitget({
+    'options': { 'defaultType': 'swap' }, // USDT Perpetual
     'enableRateLimit': true
 });
 
@@ -17,7 +17,7 @@ const timeframes = ['15m', '1h', '4h', '1d'];
 
 async function getFilteredPerpPairs() {
     try {
-        console.log("Loading Bybit Markets...");
+        console.log("Fetching Bitget Markets...");
         const tickers = await exchange.fetchTickers();
         let filteredSymbols = [];
         
@@ -25,7 +25,7 @@ async function getFilteredPerpPairs() {
             const ticker = tickers[symbol];
             
             // Filter: USDT Perpetual, Price < 10, Volume > 1M
-            if (symbol.endsWith('/USDT:USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
+            if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
@@ -67,19 +67,20 @@ async function analyzeCoin(symbol, timeframe) {
         }
 
         if (side) {
-            const cleanSymbol = symbol.split(':')[0].replace('/', '');
-            const chartUrl = `https://www.tradingview.com/chart/?symbol=BYBIT:${cleanSymbol}.P`;
+            // Chart link for TradingView (Bitget specific)
+            const cleanSymbol = symbol.replace('USDT', '');
+            const chartUrl = `https://www.tradingview.com/chart/?symbol=BITGET:${cleanSymbol}USDT.P`;
             
             const message = `
-${emoji} *${side}*
+${emoji} *${side} (Bitget)*
 --------------------------
-🪙 *Coin:* #${cleanSymbol.replace('USDT', '')}
+🪙 *Coin:* #${cleanSymbol}
 ⏰ *Timeframe:* ${timeframe}
 💰 *Price:* ${lastPrice}
 📊 *RSI:* ${lastRsi ? lastRsi.toFixed(2) : 'N/A'}
 📉 *EMA 20:* ${lastEma20.toFixed(4)}
 --------------------------
-🔗 [Open Chart on TradingView](${chartUrl})
+🔗 [Open Chart](${chartUrl})
             `;
             await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         }
@@ -92,11 +93,11 @@ async function run() {
         const totalCoins = coins.length;
 
         if (totalCoins === 0) {
-            await bot.sendMessage(chatId, "⚠️ No coins found on Bybit matching criteria.");
+            console.log("No coins found on Bitget.");
             return;
         }
 
-        await bot.sendMessage(chatId, `🔍 *Bybit Scanner Started*\nFound *${totalCoins}* Active coins\nPrice < $10 | Vol > 1M\nScanning timeframes...`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, `🔍 *Bitget Scanner Started*\nFound *${totalCoins}* Active coins\nPrice < $10 | Vol > 1M\nScanning timeframes...`, { parse_mode: 'Markdown' });
 
         for (const tf of timeframes) {
             for (const coin of coins) {

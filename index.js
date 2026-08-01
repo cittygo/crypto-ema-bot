@@ -7,7 +7,6 @@ const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
-// Using Bitget as it supports cloud server IPs (unlike Binance)
 const exchange = new ccxt.bitget({
     'options': { 'defaultType': 'swap' },
     'enableRateLimit': true
@@ -19,86 +18,71 @@ async function getFilteredPerpPairs() {
     try {
         const tickers = await exchange.fetchTickers();
         let filteredSymbols = [];
-        
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
-            // Condition: USDT pair, Price < $10, 24h Volume > $1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
-        // Sort by volume and pick TOP 100 coins
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
         return filteredSymbols.slice(0, 100); 
     } catch (e) { return []; }
 }
 
 async function analyzeCoin(symbol, timeframe) {
+    let found = false;
     try {
         const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
-        if (candles.length < 50) return;
+        if (candles.length < 50) return false;
 
         const closePrices = candles.map(c => c[4]);
         const lastPrice = closePrices[closePrices.length - 1];
+        const lastEma20 = EMA.calculate({ period: 20, values: closePrices }).pop();
+        const lastRsi = RSI.calculate({ period: 14, values: closePrices }).pop();
 
-        const ema20Array = EMA.calculate({ period: 20, values: closePrices });
-        const lastEma20 = ema20Array[ema20Array.length - 1];
+        if (!lastEma20 || !lastRsi) return false;
 
-        const rsiArray = RSI.calculate({ period: 14, values: closePrices });
-        const lastRsi = rsiArray[rsiArray.length - 1];
-
-        if (!lastEma20 || !lastRsi) return;
-
-        let side = "";
-        let emoji = "";
-        let entryQuality = "";
-
-        // Strategy: EMA 20 + RSI Filter
-        if (lastPrice > lastEma20) {
-            if (lastRsi > 70) return; // Avoid Overbought
-            side = "LONG Opportunity";
-            emoji = "🟢";
-            if (lastRsi >= 30 && lastRsi <= 45) entryQuality = "🔥 BEST LONG ENTRY (RSI 30-45)";
-        } 
-        else if (lastPrice < lastEma20) {
-            if (lastRsi < 30) return; // Avoid Oversold
-            side = "SHORT Opportunity";
-            emoji = "🔴";
-            if (lastRsi >= 55 && lastRsi <= 70) entryQuality = "🔥 BEST SHORT ENTRY (RSI 55-70)";
+        let side = "", emoji = "", quality = "";
+        if (lastPrice > lastEma20 && lastRsi <= 70) {
+            side = "LONG Opportunity"; emoji = "🟢";
+            if (lastRsi >= 30 && lastRsi <= 45) quality = "🔥 BEST LONG ENTRY";
+        } else if (lastPrice < lastEma20 && lastRsi >= 30) {
+            side = "SHORT Opportunity"; emoji = "🔴";
+            if (lastRsi >= 55 && lastRsi <= 70) quality = "🔥 BEST SHORT ENTRY";
         }
 
         if (side) {
-            const baseAsset = symbol.split('/')[0]; 
-            const binanceChartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${baseAsset}USDT.P`;
-            
-            const message = `
-${emoji} *${side}*
-${entryQuality ? entryQuality + '\n' : ''}--------------------------
-🪙 *Coin:* #${baseAsset}
-⏰ *TF:* ${timeframe} | 💰 *Price:* ${lastPrice}
-📊 *RSI:* ${lastRsi.toFixed(2)} | 📉 *EMA20:* ${lastEma20.toFixed(4)}
---------------------------
-🔗 [Open Binance Chart](${binanceChartUrl})
-            `;
-            await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+            const base = symbol.split('/')[0];
+            const url = `https://www.tradingview.com/chart/?symbol=BINANCE:${base}USDT.P`;
+            const msg = `${emoji} *${side}*\n${quality ? quality + '\n' : ''}--------------------------\n🪙 *Coin:* #${base}\n⏰ *TF:* ${timeframe} | 💰 *Price:* ${lastPrice}\n📊 *RSI:* ${lastRsi.toFixed(2)}\n--------------------------\n🔗 [Open Binance Chart](${url})`;
+            await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+            return true;
         }
     } catch (e) {}
+    return false;
 }
 
 async function run() {
     try {
         const coins = await getFilteredPerpPairs();
-        if (coins.length === 0) return;
-
-        await bot.sendMessage(chatId, `🔍 *Scanner Started*\nScanning *${coins.length}* coins (Top Vol)\nTimeframes: ${timeframes.join(', ')}`, { parse_mode: 'Markdown' });
+        let totalSignals = 0;
+        
+        // Removed start message to keep it clean, only alerts if signals found.
+        // But we will add a final status message to confirm the run.
 
         for (const tf of timeframes) {
             for (const coin of coins) {
-                await analyzeCoin(coin, tf);
+                const signalFound = await analyzeCoin(coin, tf);
+                if (signalFound) totalSignals++;
                 await new Promise(res => setTimeout(res, 400));
             }
         }
-        await bot.sendMessage(chatId, "✅ *Scan Completed.*");
+        
+        if (totalSignals === 0) {
+            await bot.sendMessage(chatId, "✅ Scan complete: No signals matched the strategy this time.");
+        } else {
+            await bot.sendMessage(chatId, `✅ Scan complete: Found ${totalSignals} signals.`);
+        }
     } catch (error) { console.error(error.message); }
 }
 

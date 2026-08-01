@@ -1,8 +1,8 @@
 name: Crypto Scanner
 on:
   schedule:
-    - cron: '0 */2 * * *'
-  workflow_dispatch:
+    - cron: '10 * * * *'  # Runs every hour at the 10th minute
+  workflow_dispatch:      # Allows manual run
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
       - run: npm install
       - run: node index.js
         env:

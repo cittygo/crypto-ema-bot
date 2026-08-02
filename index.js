@@ -20,8 +20,8 @@ async function getFilteredPerpPairs() {
         let filteredSymbols = [];
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
-            // Price < 10, Volume > 1M
-            if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
+            // Filter: USDT Perp and Volume > 1M
+            if (symbol.endsWith('USDT') && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
@@ -33,34 +33,72 @@ async function getFilteredPerpPairs() {
 async function analyzeCoin(symbol, timeframe) {
     try {
         const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
-        if (candles.length < 50) return false;
+        if (candles.length < 60) return false;
 
         const closePrices = candles.map(c => c[4]);
         const lastPrice = closePrices[closePrices.length - 1];
-        const lastEma20 = EMA.calculate({ period: 20, values: closePrices }).pop();
-        const lastRsi = RSI.calculate({ period: 14, values: closePrices }).pop();
+
+        // Indicators Calculation
+        const ema20Arr = EMA.calculate({ period: 20, values: closePrices });
+        const ema50Arr = EMA.calculate({ period: 50, values: closePrices });
+        const rsiArr = RSI.calculate({ period: 14, values: closePrices });
+
+        const lastEma20 = ema20Arr[ema20Arr.length - 1];
+        const prevEma20 = ema20Arr[ema20Arr.length - 2];
+        const lastEma50 = ema50Arr[ema50Arr.length - 1];
+        const lastRsi = rsiArr[rsiArr.length - 1];
 
         if (!lastEma20 || !lastRsi) return false;
 
-        let side = "", emoji = "", quality = "";
+        let signalType = ""; // BUY or SELL
+        let strength = "Normal"; // Normal or Strong
+        let emoji = "";
 
-        // STRATEGY: RSI 20-30 for BUY | RSI 70-100 for SELL
-        if (lastPrice > lastEma20 && lastRsi >= 20 && lastRsi <= 30) {
-            side = "LONG Opportunity";
+        // --- BUY LOGIC ---
+        // 1. RSI 20-30 (Independent Signal)
+        if (lastRsi >= 20 && lastRsi <= 30) {
+            signalType = "LONG Opportunity";
             emoji = "🟢";
-            quality = "🔥 STRONG BUY (Oversold RSI 20-30)";
-        } 
-        else if (lastPrice < lastEma20 && lastRsi >= 70 && lastRsi <= 100) {
-            side = "SHORT Opportunity";
-            emoji = "🔴";
-            quality = "🔥 STRONG SELL (Overbought RSI 70-100)";
+            strength = "High (Oversold RSI)";
+        }
+        // 2. Combined EMA + RSI Buy Logic
+        if (lastPrice > lastEma20 && lastRsi >= 20 && lastRsi <= 35) {
+            signalType = "LONG Opportunity";
+            emoji = "🟢";
+            strength = "Very Strong (EMA Cross + Low RSI)";
         }
 
-        if (side) {
+        // --- SELL LOGIC ---
+        // 1. RSI 70-100 (Independent Signal)
+        if (lastRsi >= 70 && lastRsi <= 100) {
+            signalType = "SHORT Opportunity";
+            emoji = "🔴";
+            strength = "High (Overbought RSI)";
+        }
+        // 2. EMA Decreasing check for Sell
+        if (lastRsi >= 70 && lastEma20 < prevEma20) {
+            signalType = "SHORT Opportunity";
+            emoji = "🔴";
+            strength = "Extreme Strong (RSI High + EMA Decreasing)";
+        }
+
+        if (signalType) {
             const base = symbol.split('/')[0];
             const url = `https://www.tradingview.com/chart/?symbol=BINANCE:${base}USDT.P`;
-            const msg = `${emoji} *${side}*\n${quality}\n--------------------------\n🪙 *Coin:* #${base}\n⏰ *TF:* ${timeframe} | 💰 *Price:* ${lastPrice}\n📊 *RSI:* ${lastRsi.toFixed(2)}\n📉 *EMA 20:* ${lastEma20.toFixed(4)}\n--------------------------\n🔗 [Open Binance Chart](${url})`;
-            await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+            const message = `
+${emoji} *${signalType}*
+--------------------------
+🔥 *Strength:* ${strength}
+🪙 *Coin:* #${base}
+⏰ *TF:* ${timeframe}
+💰 *Price:* ${lastPrice}
+📊 *RSI:* ${lastRsi.toFixed(2)}
+📉 *EMA 20:* ${lastEma20.toFixed(4)}
+📉 *EMA 50:* ${lastEma50.toFixed(4)}
+--------------------------
+🔗 [Open Binance Chart](${url})`;
+            
+            await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
             return true;
         }
     } catch (e) {}
@@ -80,11 +118,7 @@ async function run() {
             }
         }
         
-        // Final Status Message (Heartbeat) to confirm the bot is working
-        const statusMsg = totalSignals === 0 
-            ? "✅ Scan complete: No signals (RSI 20-30 or 70-100) found." 
-            : `✅ Scan complete: Found ${totalSignals} high-quality signals.`;
-        
+        const statusMsg = `✅ Scan Finished.\nTotal High-Quality Signals: ${totalSignals}`;
         await bot.sendMessage(chatId, statusMsg);
     } catch (error) {
         console.error("Run Error:", error.message);

@@ -7,33 +7,28 @@ const token = process.env.TELEGRAM_TOKEN;
 const chatId = process.env.CHAT_ID;
 const bot = new TelegramBot(token);
 
-// Using Bitget swap for data (Best for GitHub Actions)
 const exchange = new ccxt.bitget({
     'options': { 'defaultType': 'swap' },
     'enableRateLimit': true
 });
 
-// Timeframes: 15m, 2h, 4h, 1d, 1w
 const timeframes = ['15m', '2h', '4h', '1d', '1w'];
 
 async function getFilteredPerpPairs() {
     try {
         const tickers = await exchange.fetchTickers();
         let filteredSymbols = [];
-        
         for (const symbol in tickers) {
-            const ticker = tickers[ticker];
-            // Filter: USDT Perp, Price < 10 USDT, Volume > 1M
+            const ticker = tickers[symbol];
+            // Filter: Price < 10 USDT and Volume > 1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
-        // Sort by volume and get top 100
+        // Sorting by volume and picking TOP 200 coins
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
-        return filteredSymbols.slice(0, 100); 
-    } catch (e) {
-        return [];
-    }
+        return filteredSymbols.slice(0, 200); 
+    } catch (e) { return []; }
 }
 
 async function analyzeCoin(symbol, timeframe) {
@@ -45,58 +40,64 @@ async function analyzeCoin(symbol, timeframe) {
         const lastPrice = closePrices[closePrices.length - 1];
 
         const ema20Arr = EMA.calculate({ period: 20, values: closePrices });
-        const ema50Arr = EMA.calculate({ period: 50, values: closePrices });
         const rsiArr = RSI.calculate({ period: 14, values: closePrices });
 
         const lastEma20 = ema20Arr[ema20Arr.length - 1];
         const prevEma20 = ema20Arr[ema20Arr.length - 2];
-        const lastEma50 = ema50Arr[ema50Arr.length - 1];
         const lastRsi = rsiArr[rsiArr.length - 1];
 
         if (!lastEma20 || !lastRsi) return false;
 
-        let signalType = ""; 
-        let strength = "Normal"; 
+        let signals = [];
+        let side = "";
         let emoji = "";
 
-        // LONG (BUY) Logic: RSI 10-30
+        // --- Independent Rules Search ---
+
+        // Rule 1: RSI 10-30 (Buy Signal)
         if (lastRsi >= 10 && lastRsi <= 30) {
-            signalType = "LONG Opportunity";
+            side = "LONG Opportunity";
             emoji = "🟢";
-            strength = "Extreme (RSI 10-30)";
-        }
-        if (lastPrice > lastEma20 && lastRsi >= 10 && lastRsi <= 35) {
-            signalType = "LONG Opportunity";
-            emoji = "🟢";
-            strength = "Super Strong (EMA Support)";
+            signals.push("RSI is 10-30 (Oversold)");
         }
 
-        // SHORT (SELL) Logic: RSI 70-100
+        // Rule 2: Price > EMA 20 (Buy Signal)
+        if (lastPrice > lastEma20) {
+            side = "LONG Opportunity";
+            emoji = "🟢";
+            signals.push("Price is above EMA 20");
+        }
+
+        // Rule 3: RSI 70-100 (Sell Signal)
         if (lastRsi >= 70 && lastRsi <= 100) {
-            signalType = "SHORT Opportunity";
+            side = "SHORT Opportunity";
             emoji = "🔴";
-            strength = "High (Overbought RSI)";
-        }
-        if (lastRsi >= 70 && lastEma20 < prevEma20) {
-            signalType = "SHORT Opportunity";
-            emoji = "🔴";
-            strength = "Maximum Strength (EMA Falling)";
+            signals.push("RSI is 70-100 (Overbought)");
+            if (lastEma20 < prevEma20) signals.push("EMA 20 is Decreasing");
         }
 
-        if (signalType) {
+        // Rule 4: Price < EMA 20 (Sell Signal)
+        if (lastPrice < lastEma20 && side !== "LONG Opportunity") {
+            side = "SHORT Opportunity";
+            emoji = "🔴";
+            signals.push("Price is below EMA 20");
+        }
+
+        if (signals.length > 0) {
             const baseAsset = symbol.split('/')[0]; 
             const binanceChartUrl = `https://www.tradingview.com/chart/?symbol=BINANCE:${baseAsset}USDT.P`;
             
             const message = `
-${emoji} *${signalType}*
+${emoji} *${side}*
 --------------------------
-🔥 *Strength:* ${strength}
+🔔 *Triggered Rules:*
+${signals.map(s => "✅ " + s).join("\n")}
+--------------------------
 🪙 *Coin:* #${baseAsset}
 ⏰ *TF:* ${timeframe}
 💰 *Price:* ${lastPrice}
 📊 *RSI:* ${lastRsi.toFixed(2)}
 📉 *EMA 20:* ${lastEma20.toFixed(4)}
-📉 *EMA 50:* ${lastEma50.toFixed(4)}
 --------------------------
 🔗 [Open Binance Chart](${binanceChartUrl})`;
             
@@ -111,6 +112,8 @@ async function run() {
     try {
         const coins = await getFilteredPerpPairs();
         let totalSignals = 0;
+        
+        await bot.sendMessage(chatId, `🔍 *Scanner Started (Top 200)*\nScanning ${coins.length} coins across 5 timeframes...`);
 
         for (const tf of timeframes) {
             for (const coin of coins) {
@@ -119,14 +122,8 @@ async function run() {
                 await new Promise(res => setTimeout(res, 450));
             }
         }
-        
-        const statusMsg = totalSignals === 0 
-            ? "✅ Scan Finished: Price < $10 | No signals found." 
-            : `✅ Scan Finished: Found ${totalSignals} signals.`;
-        await bot.sendMessage(chatId, statusMsg);
-    } catch (error) {
-        console.error("Error:", error.message);
-    }
+        await bot.sendMessage(chatId, `✅ Scan Finished. Found ${totalSignals} alerts.`);
+    } catch (error) { console.error(error.message); }
 }
 
 run();

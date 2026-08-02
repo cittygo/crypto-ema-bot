@@ -43,7 +43,6 @@ async function analyzeCoin(symbol, timeframe) {
         const rsiArr = RSI.calculate({ period: 14, values: closePrices });
 
         const lastEma20 = ema20Arr[ema20Arr.length - 1];
-        const prevEma20 = ema20Arr[ema20Arr.length - 2];
         const lastRsi = rsiArr[rsiArr.length - 1];
 
         if (!lastEma20 || !lastRsi) return false;
@@ -52,32 +51,23 @@ async function analyzeCoin(symbol, timeframe) {
         let side = "";
         let emoji = "";
 
-        // --- Independent Rules Search ---
-
-        // Rule 1: RSI 10-30 (Buy Signal)
+        // --- RSI Independent Rules (Priority) ---
         if (lastRsi >= 10 && lastRsi <= 30) {
             side = "LONG Opportunity";
             emoji = "🟢";
-            signals.push("RSI is 10-30 (Oversold)");
+            signals.push("🔥 STRONG BUY: RSI is 10-30 (Deep Oversold)");
+        } else if (lastRsi >= 70 && lastRsi <= 100) {
+            side = "SHORT Opportunity";
+            emoji = "🔴";
+            signals.push("🔥 STRONG SELL: RSI is 70-100 (Extreme Overbought)");
         }
 
-        // Rule 2: Price > EMA 20 (Buy Signal)
-        if (lastPrice > lastEma20) {
+        // --- EMA Independent Rules ---
+        if (lastPrice > lastEma20 && side !== "SHORT Opportunity") {
             side = "LONG Opportunity";
             emoji = "🟢";
             signals.push("Price is above EMA 20");
-        }
-
-        // Rule 3: RSI 70-100 (Sell Signal)
-        if (lastRsi >= 70 && lastRsi <= 100) {
-            side = "SHORT Opportunity";
-            emoji = "🔴";
-            signals.push("RSI is 70-100 (Overbought)");
-            if (lastEma20 < prevEma20) signals.push("EMA 20 is Decreasing");
-        }
-
-        // Rule 4: Price < EMA 20 (Sell Signal)
-        if (lastPrice < lastEma20 && side !== "LONG Opportunity") {
+        } else if (lastPrice < lastEma20 && side !== "LONG Opportunity") {
             side = "SHORT Opportunity";
             emoji = "🔴";
             signals.push("Price is below EMA 20");
@@ -113,7 +103,7 @@ async function run() {
         const coins = await getFilteredPerpPairs();
         let totalSignals = 0;
         
-        await bot.sendMessage(chatId, `🔍 *Scanner Started (Top 200)*\nScanning ${coins.length} coins across 5 timeframes...`);
+        await bot.sendMessage(chatId, `🔍 *Scanner Started (Top 200)*\nTarget: RSI 10-30 & 70-100\nScanning 200 coins...`);
 
         for (const tf of timeframes) {
             for (const coin of coins) {

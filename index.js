@@ -20,12 +20,10 @@ async function getFilteredPerpPairs() {
         let filteredSymbols = [];
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
-            // Filter: Price < 10 USDT and Volume > 1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
         }
-        // Sorting by volume and picking TOP 200 coins
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
         return filteredSymbols.slice(0, 200); 
     } catch (e) { return []; }
@@ -37,40 +35,48 @@ async function analyzeCoin(symbol, timeframe) {
         if (candles.length < 60) return false;
 
         const closePrices = candles.map(c => c[4]);
-        const lastPrice = closePrices[closePrices.length - 1];
+        
+        // தற்போதைய முடிவடைந்த மெழுகுவர்த்தி (Last Closed Candle)
+        const currentClose = closePrices[closePrices.length - 2];
+        // அதற்கு முந்தைய மெழுகுவர்த்தி (Previous Closed Candle)
+        const previousClose = closePrices[closePrices.length - 3];
 
         const ema20Arr = EMA.calculate({ period: 20, values: closePrices });
         const rsiArr = RSI.calculate({ period: 14, values: closePrices });
 
-        const lastEma20 = ema20Arr[ema20Arr.length - 1];
-        const lastRsi = rsiArr[rsiArr.length - 1];
+        const currentEma20 = ema20Arr[ema20Arr.length - 2];
+        const previousEma20 = ema20Arr[ema20Arr.length - 3];
+        const currentRsi = rsiArr[rsiArr.length - 2];
 
-        if (!lastEma20 || !lastRsi) return false;
+        if (!currentEma20 || !currentRsi) return false;
 
         let signals = [];
         let side = "";
         let emoji = "";
 
-        // --- RSI Independent Rules (Priority) ---
-        if (lastRsi >= 10 && lastRsi <= 30) {
-            side = "LONG Opportunity";
-            emoji = "🟢";
-            signals.push("🔥 STRONG BUY: RSI is 10-30 (Deep Oversold)");
-        } else if (lastRsi >= 70 && lastRsi <= 100) {
-            side = "SHORT Opportunity";
-            emoji = "🔴";
-            signals.push("🔥 STRONG SELL: RSI is 70-100 (Extreme Overbought)");
+        // --- RSI RULES (Independent) ---
+        if (currentRsi >= 10 && currentRsi <= 30) {
+            side = "LONG Opportunity"; emoji = "🟢";
+            signals.push("RSI is 10-30 (Deep Oversold)");
+        } else if (currentRsi >= 70 && currentRsi <= 100) {
+            side = "SHORT Opportunity"; emoji = "🔴";
+            signals.push("RSI is 70-100 (Overbought)");
         }
 
-        // --- EMA Independent Rules ---
-        if (lastPrice > lastEma20 && side !== "SHORT Opportunity") {
+        // --- EMA CROSSOVER LOGIC (Only triggers on break-through) ---
+        
+        // LONG CROSS: Previous Close was BELOW EMA, and Current Close is ABOVE EMA
+        if (previousClose < previousEma20 && currentClose > currentEma20) {
             side = "LONG Opportunity";
             emoji = "🟢";
-            signals.push("Price is above EMA 20");
-        } else if (lastPrice < lastEma20 && side !== "LONG Opportunity") {
+            signals.push("EMA 20 BULLISH CROSS (Candle Closed Above)");
+        }
+        
+        // SHORT CROSS: Previous Close was ABOVE EMA, and Current Close is BELOW EMA
+        else if (previousClose > previousEma20 && currentClose < currentEma20) {
             side = "SHORT Opportunity";
             emoji = "🔴";
-            signals.push("Price is below EMA 20");
+            signals.push("EMA 20 BEARISH CROSS (Candle Closed Below)");
         }
 
         if (signals.length > 0) {
@@ -85,9 +91,9 @@ ${signals.map(s => "✅ " + s).join("\n")}
 --------------------------
 🪙 *Coin:* #${baseAsset}
 ⏰ *TF:* ${timeframe}
-💰 *Price:* ${lastPrice}
-📊 *RSI:* ${lastRsi.toFixed(2)}
-📉 *EMA 20:* ${lastEma20.toFixed(4)}
+💰 *Price:* ${currentClose}
+📊 *RSI:* ${currentRsi.toFixed(2)}
+📉 *EMA 20:* ${currentEma20.toFixed(4)}
 --------------------------
 🔗 [Open Binance Chart](${binanceChartUrl})`;
             
@@ -103,8 +109,6 @@ async function run() {
         const coins = await getFilteredPerpPairs();
         let totalSignals = 0;
         
-        await bot.sendMessage(chatId, `🔍 *Scanner Started (Top 200)*\nTarget: RSI 10-30 & 70-100\nScanning 200 coins...`);
-
         for (const tf of timeframes) {
             for (const coin of coins) {
                 const signalFound = await analyzeCoin(coin, tf);
@@ -112,7 +116,7 @@ async function run() {
                 await new Promise(res => setTimeout(res, 450));
             }
         }
-        await bot.sendMessage(chatId, `✅ Scan Finished. Found ${totalSignals} alerts.`);
+        await bot.sendMessage(chatId, `✅ Scan Finished. Signals Found: ${totalSignals}`);
     } catch (error) { console.error(error.message); }
 }
 

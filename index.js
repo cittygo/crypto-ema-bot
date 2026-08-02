@@ -20,6 +20,7 @@ async function getFilteredPerpPairs() {
         let filteredSymbols = [];
         for (const symbol in tickers) {
             const ticker = tickers[symbol];
+            // Price < 10, Volume > 1M
             if (symbol.endsWith('USDT') && ticker.last < 10 && ticker.quoteVolume > 1000000) {
                 filteredSymbols.push(symbol);
             }
@@ -30,7 +31,6 @@ async function getFilteredPerpPairs() {
 }
 
 async function analyzeCoin(symbol, timeframe) {
-    let found = false;
     try {
         const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
         if (candles.length < 50) return false;
@@ -43,18 +43,23 @@ async function analyzeCoin(symbol, timeframe) {
         if (!lastEma20 || !lastRsi) return false;
 
         let side = "", emoji = "", quality = "";
-        if (lastPrice > lastEma20 && lastRsi <= 70) {
-            side = "LONG Opportunity"; emoji = "🟢";
-            if (lastRsi >= 30 && lastRsi <= 45) quality = "🔥 BEST LONG ENTRY";
-        } else if (lastPrice < lastEma20 && lastRsi >= 30) {
-            side = "SHORT Opportunity"; emoji = "🔴";
-            if (lastRsi >= 55 && lastRsi <= 70) quality = "🔥 BEST SHORT ENTRY";
+
+        // STRATEGY: RSI 20-30 for BUY | RSI 70-100 for SELL
+        if (lastPrice > lastEma20 && lastRsi >= 20 && lastRsi <= 30) {
+            side = "LONG Opportunity";
+            emoji = "🟢";
+            quality = "🔥 STRONG BUY (Oversold RSI 20-30)";
+        } 
+        else if (lastPrice < lastEma20 && lastRsi >= 70 && lastRsi <= 100) {
+            side = "SHORT Opportunity";
+            emoji = "🔴";
+            quality = "🔥 STRONG SELL (Overbought RSI 70-100)";
         }
 
         if (side) {
             const base = symbol.split('/')[0];
             const url = `https://www.tradingview.com/chart/?symbol=BINANCE:${base}USDT.P`;
-            const msg = `${emoji} *${side}*\n${quality ? quality + '\n' : ''}--------------------------\n🪙 *Coin:* #${base}\n⏰ *TF:* ${timeframe} | 💰 *Price:* ${lastPrice}\n📊 *RSI:* ${lastRsi.toFixed(2)}\n--------------------------\n🔗 [Open Binance Chart](${url})`;
+            const msg = `${emoji} *${side}*\n${quality}\n--------------------------\n🪙 *Coin:* #${base}\n⏰ *TF:* ${timeframe} | 💰 *Price:* ${lastPrice}\n📊 *RSI:* ${lastRsi.toFixed(2)}\n📉 *EMA 20:* ${lastEma20.toFixed(4)}\n--------------------------\n🔗 [Open Binance Chart](${url})`;
             await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
             return true;
         }
@@ -66,9 +71,6 @@ async function run() {
     try {
         const coins = await getFilteredPerpPairs();
         let totalSignals = 0;
-        
-        // Removed start message to keep it clean, only alerts if signals found.
-        // But we will add a final status message to confirm the run.
 
         for (const tf of timeframes) {
             for (const coin of coins) {
@@ -78,12 +80,15 @@ async function run() {
             }
         }
         
-        if (totalSignals === 0) {
-            await bot.sendMessage(chatId, "✅ Scan complete: No signals matched the strategy this time.");
-        } else {
-            await bot.sendMessage(chatId, `✅ Scan complete: Found ${totalSignals} signals.`);
-        }
-    } catch (error) { console.error(error.message); }
+        // Final Status Message (Heartbeat) to confirm the bot is working
+        const statusMsg = totalSignals === 0 
+            ? "✅ Scan complete: No signals (RSI 20-30 or 70-100) found." 
+            : `✅ Scan complete: Found ${totalSignals} high-quality signals.`;
+        
+        await bot.sendMessage(chatId, statusMsg);
+    } catch (error) {
+        console.error("Run Error:", error.message);
+    }
 }
 
 run();

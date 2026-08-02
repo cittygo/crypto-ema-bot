@@ -12,7 +12,8 @@ const exchange = new ccxt.bitget({
     'enableRateLimit': true
 });
 
-const timeframes = ['15m', '2h', '4h', '1d', '1w'];
+// 15m removed as requested
+const timeframes = ['2h', '4h', '1d', '1w'];
 
 async function getFilteredPerpPairs() {
     try {
@@ -36,9 +37,9 @@ async function analyzeCoin(symbol, timeframe) {
 
         const closePrices = candles.map(c => c[4]);
         
-        // தற்போதைய முடிவடைந்த மெழுகுவர்த்தி (Last Closed Candle)
+        // 1. Current closed candle (T-1)
         const currentClose = closePrices[closePrices.length - 2];
-        // அதற்கு முந்தைய மெழுகுவர்த்தி (Previous Closed Candle)
+        // 2. Previous closed candle (T-2)
         const previousClose = closePrices[closePrices.length - 3];
 
         const ema20Arr = EMA.calculate({ period: 20, values: closePrices });
@@ -54,29 +55,29 @@ async function analyzeCoin(symbol, timeframe) {
         let side = "";
         let emoji = "";
 
-        // --- RSI RULES (Independent) ---
+        // --- RSI RULE (Independent & Always Alert if in range) ---
         if (currentRsi >= 10 && currentRsi <= 30) {
-            side = "LONG Opportunity"; emoji = "🟢";
-            signals.push("RSI is 10-30 (Deep Oversold)");
+            side = "NEW RSI LONG Opportunity"; emoji = "🟢";
+            signals.push("RSI entered 10-30 (Deep Oversold)");
         } else if (currentRsi >= 70 && currentRsi <= 100) {
-            side = "SHORT Opportunity"; emoji = "🔴";
-            signals.push("RSI is 70-100 (Overbought)");
+            side = "NEW RSI SHORT Opportunity"; emoji = "🔴";
+            signals.push("RSI entered 70-100 (Extreme Overbought)");
         }
 
-        // --- EMA CROSSOVER LOGIC (Only triggers on break-through) ---
+        // --- NEW EMA CROSSOVER RULE (Triggers ONLY on the exact crossing candle) ---
         
-        // LONG CROSS: Previous Close was BELOW EMA, and Current Close is ABOVE EMA
+        // LONG CROSS: Previous candle was BELOW EMA, and NOW it closed ABOVE
         if (previousClose < previousEma20 && currentClose > currentEma20) {
-            side = "LONG Opportunity";
+            side = "NEW LONG Signal (EMA Cross)";
             emoji = "🟢";
-            signals.push("EMA 20 BULLISH CROSS (Candle Closed Above)");
+            signals.push("Price just Crossed ABOVE EMA 20 (Crossover)");
         }
         
-        // SHORT CROSS: Previous Close was ABOVE EMA, and Current Close is BELOW EMA
+        // SHORT CROSS: Previous candle was ABOVE EMA, and NOW it closed BELOW
         else if (previousClose > previousEma20 && currentClose < currentEma20) {
-            side = "SHORT Opportunity";
+            side = "NEW SHORT Signal (EMA Cross)";
             emoji = "🔴";
-            signals.push("EMA 20 BEARISH CROSS (Candle Closed Below)");
+            signals.push("Price just Crossed BELOW EMA 20 (Crossover)");
         }
 
         if (signals.length > 0) {
@@ -86,7 +87,8 @@ async function analyzeCoin(symbol, timeframe) {
             const message = `
 ${emoji} *${side}*
 --------------------------
-🔔 *Triggered Rules:*
+⚡ *Condition:* NEW SIGNAL ONLY
+🔔 *Trigger:*
 ${signals.map(s => "✅ " + s).join("\n")}
 --------------------------
 🪙 *Coin:* #${baseAsset}
@@ -116,7 +118,7 @@ async function run() {
                 await new Promise(res => setTimeout(res, 450));
             }
         }
-        await bot.sendMessage(chatId, `✅ Scan Finished. Signals Found: ${totalSignals}`);
+        await bot.sendMessage(chatId, `✅ Scan Finished. Found ${totalSignals} NEW signals.`);
     } catch (error) { console.error(error.message); }
 }
 

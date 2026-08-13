@@ -12,8 +12,8 @@ const exchange = new ccxt.bitget({
     'enableRateLimit': true
 });
 
-// Timeframes: 4h, 1d, 1w
-const timeframes = [ '4h', '1d', '1w'];
+// Timeframes: 4h, 1d, 1w (2h removed)
+const timeframes = ['4h', '1d', '1w'];
 
 async function getFilteredPerpPairs() {
     try {
@@ -26,9 +26,9 @@ async function getFilteredPerpPairs() {
                 filteredSymbols.push(symbol);
             }
         }
-        // Sorting by volume and picking TOP 300 coins
+        // Sorting by volume and picking TOP 350 coins (300+)
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
-        return filteredSymbols.slice(0, 300); 
+        return filteredSymbols.slice(0, 350); 
     } catch (e) { return []; }
 }
 
@@ -49,13 +49,11 @@ async function analyzeCoin(symbol, timeframe) {
         let side = "";
         let emoji = "";
 
-        // --- ONLY RSI RULES ---
-        // RSI 10 to 30: LONG Opportunity
+        // RSI Rules: 10-30 (LONG) | 70-100 (SHORT)
         if (lastRsi >= 10 && lastRsi <= 30) {
             side = "RSI LONG Opportunity";
             emoji = "🟢";
         } 
-        // RSI 70 to 100: SHORT Opportunity
         else if (lastRsi >= 70 && lastRsi <= 100) {
             side = "RSI SHORT Opportunity";
             emoji = "🔴";
@@ -88,16 +86,16 @@ async function run() {
         const coins = await getFilteredPerpPairs();
         let totalSignals = 0;
         
-        await bot.sendMessage(chatId, `🔍 *RSI Scanner Started (Top 300)*\nPrice < $10 |  4h, 1d, 1w\nScanning 300 coins...`);
+        await bot.sendMessage(chatId, `🔍 *RSI Scanner Started (350 Coins)*\nTarget: Price < $10 | 4h, 1d, 1w\nScanning ${coins.length} active coins...`);
 
         for (const tf of timeframes) {
             for (const coin of coins) {
                 const signalFound = await analyzeCoin(coin, tf);
                 if (signalFound) totalSignals++;
-                await new Promise(res => setTimeout(res, 450));
+                await new Promise(res => setTimeout(res, 450)); // Essential delay for 300+ coins
             }
         }
-        await bot.sendMessage(chatId, `✅ Scan Finished. RSI Signals: ${totalSignals}`);
+        await bot.sendMessage(chatId, `✅ Scan Finished. RSI Signals Found: ${totalSignals}`);
     } catch (error) { console.error(error.message); }
 }
 

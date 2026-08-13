@@ -12,7 +12,7 @@ const exchange = new ccxt.bitget({
     'enableRateLimit': true
 });
 
-// Timeframes: 2h, 4h, 1d, 1w
+// Timeframes: 4h, 1d, 1w
 const timeframes = [ '4h', '1d', '1w'];
 
 async function getFilteredPerpPairs() {

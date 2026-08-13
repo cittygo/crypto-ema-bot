@@ -13,7 +13,7 @@ const exchange = new ccxt.bitget({
 });
 
 // Timeframes: 2h, 4h, 1d, 1w
-const timeframes = ['2h', '4h', '1d', '1w'];
+const timeframes = [ '4h', '1d', '1w'];
 
 async function getFilteredPerpPairs() {
     try {
@@ -26,9 +26,9 @@ async function getFilteredPerpPairs() {
                 filteredSymbols.push(symbol);
             }
         }
-        // Sorting by volume and picking TOP 200 coins
+        // Sorting by volume and picking TOP 300 coins
         filteredSymbols.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
-        return filteredSymbols.slice(0, 200); 
+        return filteredSymbols.slice(0, 300); 
     } catch (e) { return []; }
 }
 
@@ -88,7 +88,7 @@ async function run() {
         const coins = await getFilteredPerpPairs();
         let totalSignals = 0;
         
-        await bot.sendMessage(chatId, `🔍 *RSI Scanner Started (Top 200)*\nPrice < $10 | 2h, 4h, 1d, 1w\nScanning 200 coins...`);
+        await bot.sendMessage(chatId, `🔍 *RSI Scanner Started (Top 300)*\nPrice < $10 |  4h, 1d, 1w\nScanning 300 coins...`);
 
         for (const tf of timeframes) {
             for (const coin of coins) {

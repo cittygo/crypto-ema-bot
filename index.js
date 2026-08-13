@@ -12,10 +12,10 @@ const exchange = new ccxt.bitget({
     'enableRateLimit': true
 });
 
-// Early Entry-க்காக 15m மற்றும் 1h மீண்டும் சேர்க்கப்பட்டுள்ளது
-const timeframes = ['15m', '1h', '4h', '1d', '1w'];
+// Timeframes updated: 4h, 1d, 1w (15m and 1h removed)
+const timeframes = ['4h', '1d', '1w'];
 
-const bigCoins = ['BTC/USDT', 'BNB/USDT', 'SOL/USDT', 'ETH/USDT'];
+const majorCoins = ['BTC/USDT', 'BNB/USDT', 'SOL/USDT', 'ETH/USDT'];
 
 async function getFilteredPerpPairs() {
     try {
@@ -26,11 +26,11 @@ async function getFilteredPerpPairs() {
             const ticker = tickers[symbol];
             const baseSymbol = symbol.split(':')[0];
 
-            const isBigCoin = bigCoins.includes(baseSymbol);
-            const isCheapCoin = ticker.last < 10 && symbol.endsWith('USDT');
+            const isMajor = majorCoins.includes(baseSymbol);
+            const isCheap = ticker.last < 10 && symbol.endsWith('USDT');
 
-            // வால்யூம் லிமிட் 1M-ல் இருந்து 100K (100,000) ஆகக் குறைக்கப்பட்டுள்ளது
-            if (isBigCoin || isCheapCoin) {
+            // Volume filter set to 100k for earlier signals
+            if (isMajor || isCheap) {
                 if (ticker.quoteVolume > 100000) { 
                     filteredSymbols.push(symbol);
                 }
@@ -59,18 +59,18 @@ async function analyzeCoin(symbol, timeframe) {
 
         let side = "";
         let emoji = "";
-        let quality = "Normal";
+        let signalStrength = "Standard";
 
-        // RSI 10-30: LONG | 70-100: SHORT
+        // RSI Strategy: 10-30 for Long | 70-100 for Short
         if (lastRsi >= 10 && lastRsi <= 30) {
-            side = "EARLY LONG Opportunity";
+            side = "LONG Opportunity";
             emoji = "🟢";
-            if (lastRsi <= 20) quality = "🔥 EXTREME BOTTOM (RSI < 20)";
+            if (lastRsi <= 20) signalStrength = "Extremely Oversold (High Potential)";
         } 
         else if (lastRsi >= 70 && lastRsi <= 100) {
-            side = "EARLY SHORT Opportunity";
+            side = "SHORT Opportunity";
             emoji = "🔴";
-            if (lastRsi >= 85) quality = "🔥 EXTREME TOP (RSI > 85)";
+            if (lastRsi >= 85) signalStrength = "Extremely Overbought (High Risk)";
         }
 
         if (side) {
@@ -80,11 +80,11 @@ async function analyzeCoin(symbol, timeframe) {
             const message = `
 ${emoji} *${side}*
 --------------------------
-⚡ *Entry Quality:* ${quality}
+📊 *Strength:* ${signalStrength}
 🪙 *Coin:* #${baseAsset}
-⏰ *TF:* ${timeframes.includes(timeframe) ? timeframe : timeframe}
+⏰ *Timeframe:* ${timeframe}
 💰 *Price:* ${lastPrice}
-📊 *RSI:* ${lastRsi.toFixed(2)}
+📈 *RSI:* ${lastRsi.toFixed(2)}
 --------------------------
 🔗 [Open Binance Chart](${binanceChartUrl})`;
             
@@ -99,17 +99,20 @@ async function run() {
     try {
         const coins = await getFilteredPerpPairs();
         
-        // Start Message
-        await bot.sendMessage(chatId, `🚀 *Early Entry Scanner Started*\nFilter: Price < $10 | Vol > 100K\nScanning ${coins.length} coins across 5 timeframes...`);
+        await bot.sendMessage(chatId, `🔍 *Market Scanner Started*\nTarget: Price < $10 + Majors\nVolume > 100K | Timeframes: 4h, 1d, 1w\nCoins found: ${coins.length}`);
 
         for (const tf of timeframes) {
             for (const coin of coins) {
-                await analyzeCoin(coin, tf);
-                await new Promise(res => setTimeout(res, 400));
+                const signalFound = await analyzeCoin(coin, tf);
+                if (signalFound) {
+                    await new Promise(res => setTimeout(res, 500));
+                }
             }
         }
-        await bot.sendMessage(chatId, `✅ Scan Finished.`);
-    } catch (error) { console.error(error.message); }
+        await bot.sendMessage(chatId, `✅ Scan finished.`);
+    } catch (error) { 
+        console.error("Scanner Error: ", error.message); 
+    }
 }
 
 run();

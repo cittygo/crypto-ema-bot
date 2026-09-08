@@ -26,27 +26,40 @@ async function getFilteredPairs() {
             const isCheap = ticker.last < 10 && symbol.endsWith('USDT');
 
             if ((isMajor || isCheap) && ticker.quoteVolume > 100000) {
-                filtered.push(symbol);
+                filtered.push({
+                    symbol,
+                    change: ticker.percentage,
+                    volume: ticker.quoteVolume
+                });
             }
         }
-        filtered.sort((a, b) => tickers[b].quoteVolume - tickers[a].quoteVolume);
+        filtered.sort((a, b) => b.volume - a.volume);
         return filtered.slice(0, 350);
     } catch (e) { return []; }
 }
 
-async function analyzeCoin(symbol, timeframe) {
+async function analyzeCoin(coinObj, timeframe) {
     try {
+        const symbol = coinObj.symbol;
         const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
         if (candles.length < 50) return null;
 
         const closePrices = candles.map(c => c[4]);
-        const lastRsi = RSI.calculate({ period: 14, values: closePrices }).pop();
+        const volumes = candles.map(c => c[5]);
+        
+        const rsiArr = RSI.calculate({ period: 14, values: closePrices });
+        const lastRsi = rsiArr[rsiArr.length - 1];
+        const prevRsi = rsiArr[rsiArr.length - 2];
 
         if (!lastRsi) return null;
 
+        // Volume Spike Detection
+        const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+        const currentVol = volumes[volumes.length - 1];
+        const volSpike = currentVol > avgVol * 2; // 2x volume increase
+
         let side = "", emoji = "", strength = "Standard", priority = 3;
 
-        // RSI Logic
         if (lastRsi >= 10 && lastRsi <= 30) {
             side = "LONG Opportunity"; emoji = "🟢";
             if (lastRsi <= 20) { strength = "Extreme Oversold"; priority = 1; }
@@ -57,7 +70,6 @@ async function analyzeCoin(symbol, timeframe) {
 
         if (side) {
             const base = symbol.split('/')[0];
-            // Check if it's a major coin for Priority 2
             if (priority !== 1 && majorCoins.includes(`${base}/USDT`)) priority = 2;
 
             return {
@@ -65,6 +77,9 @@ async function analyzeCoin(symbol, timeframe) {
                 timeframe,
                 price: closePrices[closePrices.length - 1],
                 rsi: lastRsi,
+                rsiTrend: lastRsi > prevRsi ? "⬆️ Rising" : "⬇️ Falling",
+                change: coinObj.change,
+                volSpike: volSpike ? "🔥 VOLUME SPIKE!" : "Normal",
                 side,
                 emoji,
                 strength,
@@ -81,17 +96,16 @@ async function run() {
         const coins = await getFilteredPairs();
         let allSignals = [];
 
-        await bot.sendMessage(chatId, `🔍 *Advanced Scanner Started*\nPriority: 1.Extreme RSI | 2.Majors | 3.Others\nScanning ${coins.length} coins...`);
+        await bot.sendMessage(chatId, `🔍 *Professional Scanner v2.0 Started*\nChecking 24h Change, RSI Trend & Volume Spikes...\nTotal Coins: ${coins.length}`);
 
         for (const tf of timeframes) {
-            for (const coin of coins) {
-                const signal = await analyzeCoin(coin, tf);
+            for (const coinObj of coins) {
+                const signal = await analyzeCoin(coinObj, tf);
                 if (signal) allSignals.push(signal);
                 await new Promise(res => setTimeout(res, 400));
             }
         }
 
-        // Sorting Logic: Priority 1 (Extreme) -> 2 (Majors) -> 3 (Others)
         allSignals.sort((a, b) => a.priority - b.priority);
 
         if (allSignals.length === 0) {
@@ -104,17 +118,22 @@ async function run() {
 ${s.emoji} *${s.side}*
 --------------------------
 📊 *Priority:* ${s.priority === 1 ? "🔥 EXTREME" : s.priority === 2 ? "⭐ MAJOR" : "✅ NORMAL"}
+📈 *RSI:* ${s.rsi.toFixed(2)} (${s.rsiTrend})
 📉 *Strength:* ${s.strength}
+⚡ *Vol Surge:* ${s.volSpike}
+📊 *24h Change:* ${s.change}%
 🪙 *Coin:* #${s.symbol}
 ⏰ *TF:* ${s.timeframe} | 💰 *Price:* ${s.price}
-📈 *RSI:* ${s.rsi.toFixed(2)}
 --------------------------
 🔗 [Open Binance Chart](${s.url})`;
             await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
-            await new Promise(res => setTimeout(res, 500)); // Delay to avoid Telegram flood
+            await new Promise(res => setTimeout(res, 500));
         }
 
-        await bot.sendMessage(chatId, `✅ Successfully sent ${allSignals.length} sorted signals.`);
+        const longCount = allSignals.filter(s => s.side.includes("LONG")).length;
+        const shortCount = allSignals.filter(s => s.side.includes("SHORT")).length;
+
+        await bot.sendMessage(chatId, `✅ *Scan Report Summary*\nTotal Signals: ${allSignals.length}\n🟢 Longs: ${longCount} | 🔴 Shorts: ${shortCount}`);
     } catch (error) { console.error(error.message); }
 }
 

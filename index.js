@@ -1,6 +1,7 @@
 import ccxt from 'ccxt';
 import pkg from 'technicalindicators';
-const { RSI } = pkg;
+// Added ADX indicator
+const { RSI, ADX } = pkg;
 import TelegramBot from 'node-telegram-bot-api';
 
 const token = process.env.TELEGRAM_TOKEN;
@@ -44,6 +45,9 @@ async function analyzeCoin(coinObj, timeframe) {
         const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
         if (candles.length < 50) return null;
 
+        // Extracting High, Low, Close for ADX & RSI
+        const highPrices = candles.map(c => c[2]);
+        const lowPrices = candles.map(c => c[3]);
         const closePrices = candles.map(c => c[4]);
         const volumes = candles.map(c => c[5]);
         
@@ -51,21 +55,32 @@ async function analyzeCoin(coinObj, timeframe) {
         const lastRsi = rsiArr[rsiArr.length - 1];
         const prevRsi = rsiArr[rsiArr.length - 2];
 
-        if (!lastRsi) return null;
+        // ADX Calculation
+        const adxArr = ADX.calculate({ high: highPrices, low: lowPrices, close: closePrices, period: 14 });
+        if (!lastRsi || adxArr.length < 2) return null;
+
+        const lastAdx = adxArr[adxArr.length - 1].adx;
+        const prevAdx = adxArr[adxArr.length - 2].adx;
+        // Logic: Trend was strong (>25) but is now losing momentum (decreasing)
+        const isExhausted = prevAdx > 25 && lastAdx < prevAdx;
 
         // Volume Spike Detection
         const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
         const currentVol = volumes[volumes.length - 1];
         const volSpike = currentVol > avgVol * 2; // 2x volume increase
 
-        let side = "", emoji = "", strength = "Standard", priority = 3;
+        let side = "", emoji = "", strength = "Standard", priority = 3, adxStatus = "";
 
         if (lastRsi >= 10 && lastRsi <= 30) {
             side = "LONG Opportunity"; emoji = "🟢";
             if (lastRsi <= 20) { strength = "Extreme Oversold"; priority = 1; }
+            // ADX Condition for Long
+            adxStatus = isExhausted ? "🔥 SELLERS EXHAUSTED (Sniper Entry)" : "⚠️ Falling Knife (High Risk, Wait)";
         } else if (lastRsi >= 70 && lastRsi <= 100) {
             side = "SHORT Opportunity"; emoji = "🔴";
             if (lastRsi >= 80) { strength = "Extreme Overbought"; priority = 1; }
+            // ADX Condition for Short
+            adxStatus = isExhausted ? "🔥 BUYERS EXHAUSTED (Sniper Entry)" : "⚠️ Still Pumping (High Risk, Wait)";
         }
 
         if (side) {
@@ -80,6 +95,7 @@ async function analyzeCoin(coinObj, timeframe) {
                 rsiTrend: lastRsi > prevRsi ? "⬆️ Rising" : "⬇️ Falling",
                 change: coinObj.change,
                 volSpike: volSpike ? "🔥 VOLUME SPIKE!" : "Normal",
+                adxStatus: adxStatus, // New ADX Data
                 side,
                 emoji,
                 strength,
@@ -96,7 +112,7 @@ async function run() {
         const coins = await getFilteredPairs();
         let allSignals = [];
 
-        await bot.sendMessage(chatId, `🔍 *Professional Scanner v2.0 Started*\nChecking 24h Change, RSI Trend & Volume Spikes...\nTotal Coins: ${coins.length}`);
+        await bot.sendMessage(chatId, `🔍 *Professional Scanner v2.0 Started*\nChecking 24h Change, RSI Trend, Vol Spikes & ADX Exhaustion...\nTotal Coins: ${coins.length}`);
 
         for (const tf of timeframes) {
             for (const coinObj of coins) {
@@ -117,6 +133,7 @@ async function run() {
             const msg = `
 ${s.emoji} *${s.side}*
 --------------------------
+🎯 *ADX Trend:* ${s.adxStatus}
 📊 *Priority:* ${s.priority === 1 ? "🔥 EXTREME" : s.priority === 2 ? "⭐ MAJOR" : "✅ NORMAL"}
 📈 *RSI:* ${s.rsi.toFixed(2)} (${s.rsiTrend})
 📉 *Strength:* ${s.strength}

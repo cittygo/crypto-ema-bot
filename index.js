@@ -1,7 +1,7 @@
 import ccxt from 'ccxt';
 import pkg from 'technicalindicators';
-// Added MACD, ATR, and EMA for the new features
-const { RSI, ADX, MACD, ATR, EMA } = pkg;
+// Added ATR for Stop-Loss & Take-Profit calculation
+const { RSI, ADX, ATR } = pkg;
 import TelegramBot from 'node-telegram-bot-api';
 
 const token = process.env.TELEGRAM_TOKEN;
@@ -42,21 +42,19 @@ async function getFilteredPairs() {
 async function analyzeCoin(coinObj, timeframe) {
     try {
         const symbol = coinObj.symbol;
-        // Increased candle limit to 250 to calculate 200 EMA
-        const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 250);
-        if (candles.length < 200) return null;
+        const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
+        if (candles.length < 50) return null;
 
-        // Extracting High, Low, Close for Indicators
         const highPrices = candles.map(c => c[2]);
         const lowPrices = candles.map(c => c[3]);
         const closePrices = candles.map(c => c[4]);
         const volumes = candles.map(c => c[5]);
+        const lastPrice = closePrices[closePrices.length - 1];
         
         const rsiArr = RSI.calculate({ period: 14, values: closePrices });
         const lastRsi = rsiArr[rsiArr.length - 1];
         const prevRsi = rsiArr[rsiArr.length - 2];
 
-        // ADX Calculation
         const adxArr = ADX.calculate({ high: highPrices, low: lowPrices, close: closePrices, period: 14 });
         if (!lastRsi || adxArr.length < 2) return null;
 
@@ -64,22 +62,13 @@ async function analyzeCoin(coinObj, timeframe) {
         const prevAdx = adxArr[adxArr.length - 2].adx;
         const isExhausted = prevAdx > 25 && lastAdx < prevAdx;
 
-        // Volume Spike Detection
-        const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
-        const currentVol = volumes[volumes.length - 1];
-        const volSpike = currentVol > avgVol * 2; 
-
-        // 1. MACD Calculation
-        const macdArr = MACD.calculate({ values: closePrices, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-        const lastMacd = macdArr[macdArr.length - 1];
-
-        // 2. ATR Calculation (For Auto TP/SL)
+        // ATR Calculation for Auto TP & SL
         const atrArr = ATR.calculate({ high: highPrices, low: lowPrices, close: closePrices, period: 14 });
         const lastAtr = atrArr[atrArr.length - 1];
 
-        // 3. 200 EMA Calculation (For Trend Confluence)
-        const ema200Arr = EMA.calculate({ period: 200, values: closePrices });
-        const lastEma200 = ema200Arr[ema200Arr.length - 1];
+        const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+        const currentVol = volumes[volumes.length - 1];
+        const volSpike = currentVol > avgVol * 2; 
 
         let side = "", emoji = "", strength = "Standard", priority = 3, adxStatus = "";
 
@@ -96,28 +85,9 @@ async function analyzeCoin(coinObj, timeframe) {
         if (side) {
             const base = symbol.split('/')[0];
             if (priority !== 1 && majorCoins.includes(`${base}/USDT`)) priority = 2;
-            const lastPrice = closePrices[closePrices.length - 1];
 
-            // 4. Feature Logic Injections
-            
-            // MACD Confirmation
-            let macdStatus = "⏳ Awaiting Cross";
-            if (lastMacd) {
-                const isMacdBullish = lastMacd.MACD > lastMacd.signal;
-                if (side.includes("LONG") && isMacdBullish) macdStatus = "⚡ MACD BULLISH CONFIRMED";
-                else if (side.includes("SHORT") && !isMacdBullish) macdStatus = "⚡ MACD BEARISH CONFIRMED";
-            }
-
-            // Trend Confluence (200 EMA)
-            let trendConfluence = "⚠️ Counter-Trend";
-            if (lastEma200) {
-                const isBullishTrend = lastPrice > lastEma200;
-                if (side.includes("LONG") && isBullishTrend) trendConfluence = "🌟 TREND ALIGNED (Above 200 EMA)";
-                else if (side.includes("SHORT") && !isBullishTrend) trendConfluence = "🌟 TREND ALIGNED (Below 200 EMA)";
-            }
-
-            // Auto TP & SL (using ATR multiplier)
-            let tp1 = 0, tp2 = 0, sl = 0;
+            // 1. Auto TP & SL Logic
+            let sl, tp1, tp2;
             if (side.includes("LONG")) {
                 sl = lastPrice - (lastAtr * 1.5);
                 tp1 = lastPrice + (lastAtr * 1.5);
@@ -128,15 +98,42 @@ async function analyzeCoin(coinObj, timeframe) {
                 tp2 = lastPrice - (lastAtr * 3.0);
             }
 
-            // Whale Tracker (Funding Rate)
+            // 2. Whale Tracker (Funding Rate Logic)
             let whaleAlert = "Normal";
             try {
-                const fundingInfo = await exchange.fetchFundingRate(symbol);
-                if (fundingInfo && fundingInfo.fundingRate) {
-                    if (fundingInfo.fundingRate < -0.0001) whaleAlert = "🔥 SHORT SQUEEZE ALERT (Negative FR)";
-                    else if (fundingInfo.fundingRate > 0.0001) whaleAlert = "🐋 LONGS TRAPPED (High FR)";
+                const funding = await exchange.fetchFundingRate(symbol);
+                if (funding && funding.fundingRate !== undefined) {
+                    const fr = funding.fundingRate * 100;
+                    if (side.includes("LONG") && fr < -0.01) {
+                        whaleAlert = `🔥 SHORT SQUEEZE POTENTIAL (${fr.toFixed(4)}%)`;
+                    } else if (side.includes("SHORT") && fr > 0.01) {
+                        whaleAlert = `🐋 WHALES BUYING (${fr.toFixed(4)}%)`;
+                    } else {
+                        whaleAlert = `${fr.toFixed(4)}%`;
+                    }
                 }
-            } catch (e) {} // Silent ignore for funding API errors
+            } catch (e) { whaleAlert = "N/A"; }
+
+            // 4. Multi-Timeframe Match (Check HTF)
+            let mtfStatus = "N/A";
+            let htf = timeframe === '4h' ? '1d' : (timeframe === '1d' ? '1w' : null);
+            if (htf) {
+                try {
+                    const htfCandles = await exchange.fetchOHLCV(symbol, htf, undefined, 50);
+                    if (htfCandles.length > 20) {
+                        const htfClose = htfCandles.map(c => c[4]);
+                        const htfRsi = RSI.calculate({ period: 14, values: htfClose }).pop();
+                        
+                        if (side.includes("LONG") && htfRsi < 50) {
+                            mtfStatus = `🌟 MATCHED (${htf} RSI is Bullish: ${htfRsi.toFixed(1)})`;
+                        } else if (side.includes("SHORT") && htfRsi > 50) {
+                            mtfStatus = `🌟 MATCHED (${htf} RSI is Bearish: ${htfRsi.toFixed(1)})`;
+                        } else {
+                            mtfStatus = `⚠️ HTF AGAINST (${htf} RSI: ${htfRsi.toFixed(1)})`;
+                        }
+                    }
+                } catch (e) { mtfStatus = "Data Error"; }
+            } else { mtfStatus = "Max TF Reached"; }
 
             return {
                 symbol: base,
@@ -147,14 +144,15 @@ async function analyzeCoin(coinObj, timeframe) {
                 change: coinObj.change,
                 volSpike: volSpike ? "🔥 VOLUME SPIKE!" : "Normal",
                 adxStatus,
-                macdStatus,
-                trendConfluence,
-                whaleAlert,
-                tp1, tp2, sl,
                 side,
                 emoji,
                 strength,
                 priority,
+                sl: sl.toPrecision(5),
+                tp1: tp1.toPrecision(5),
+                tp2: tp2.toPrecision(5),
+                whaleAlert,
+                mtfStatus,
                 url: `https://www.tradingview.com/chart/?symbol=BINANCE:${base}USDT.P`
             };
         }
@@ -167,7 +165,7 @@ async function run() {
         const coins = await getFilteredPairs();
         let allSignals = [];
 
-        await bot.sendMessage(chatId, `🔍 *Professional Scanner v3.0 Started*\nChecking ADX, MACD, Whale Tracker & Auto TP/SL...\nTotal Coins: ${coins.length}`);
+        await bot.sendMessage(chatId, `🔍 *Professional Scanner v3.0 Started*\nChecking ADX, Multi-TF, Whales & Auto TP/SL...\nTotal Coins: ${coins.length}`);
 
         for (const tf of timeframes) {
             for (const coinObj of coins) {
@@ -189,22 +187,21 @@ async function run() {
 ${s.emoji} *${s.side}*
 --------------------------
 🎯 *ADX Trend:* ${s.adxStatus}
-⚡ *MACD:* ${s.macdStatus}
-🌟 *Macro:* ${s.trendConfluence}
-🐋 *Whales:* ${s.whaleAlert}
---------------------------
-💰 *Price:* ${s.price}
-🎯 *TP1:* ${parseFloat(s.tp1.toFixed(5))} | *TP2:* ${parseFloat(s.tp2.toFixed(5))}
-🛑 *Stop-Loss:* ${parseFloat(s.sl.toFixed(5))}
+🌟 *Multi-TF:* ${s.mtfStatus}
+🐋 *Funding (Whales):* ${s.whaleAlert}
 --------------------------
 📊 *Priority:* ${s.priority === 1 ? "🔥 EXTREME" : s.priority === 2 ? "⭐ MAJOR" : "✅ NORMAL"}
 📈 *RSI:* ${s.rsi.toFixed(2)} (${s.rsiTrend})
+📉 *Strength:* ${s.strength}
 ⚡ *Vol Surge:* ${s.volSpike}
 📊 *24h Change:* ${s.change}%
-🪙 *Coin:* #${s.symbol} | ⏰ *TF:* ${s.timeframe}
+🪙 *Coin:* #${s.symbol}
+⏰ *TF:* ${s.timeframe} | 💰 *Price:* ${s.price}
+--------------------------
+💵 *Take Profit:* ${s.tp1} | ${s.tp2}
+🛑 *Stop Loss:* ${s.sl}
 --------------------------
 🔗 [Open Binance Chart](${s.url})`;
-            
             await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
             await new Promise(res => setTimeout(res, 500));
         }

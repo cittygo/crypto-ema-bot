@@ -45,10 +45,13 @@ async function analyzeCoin(coinObj, timeframe) {
         const candles = await exchange.fetchOHLCV(symbol, timeframe, undefined, 100);
         if (candles.length < 50) return null;
 
+        // OHLC for Patterns and Indicators
+        const openPrices = candles.map(c => c[1]);
         const highPrices = candles.map(c => c[2]);
         const lowPrices = candles.map(c => c[3]);
         const closePrices = candles.map(c => c[4]);
         const volumes = candles.map(c => c[5]);
+        
         const lastPrice = closePrices[closePrices.length - 1];
         
         const rsiArr = RSI.calculate({ period: 14, values: closePrices });
@@ -69,6 +72,30 @@ async function analyzeCoin(coinObj, timeframe) {
         const avgVol = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
         const currentVol = volumes[volumes.length - 1];
         const volSpike = currentVol > avgVol * 2; 
+
+        // --- CANDLESTICK PATTERN RECOGNITION ---
+        const len = closePrices.length;
+        const O1 = openPrices[len - 2], H1 = highPrices[len - 2], L1 = lowPrices[len - 2], C1 = closePrices[len - 2];
+        const O2 = openPrices[len - 1], H2 = highPrices[len - 1], L2 = lowPrices[len - 1], C2 = closePrices[len - 1];
+        
+        const body = Math.abs(C2 - O2);
+        const lowerWick = Math.min(O2, C2) - L2;
+        const upperWick = H2 - Math.max(O2, C2);
+        
+        let candlePattern = "Normal";
+        
+        // Bullish Patterns (for LONG)
+        if (C1 < O1 && C2 > O2 && O2 <= C1 && C2 >= O1) {
+            candlePattern = "🐂 Bullish Engulfing";
+        } else if (lowerWick >= 2 * body && upperWick <= body * 0.5 && body > 0) {
+            candlePattern = "🔨 Hammer (Bullish)";
+        } 
+        // Bearish Patterns (for SHORT)
+        else if (C1 > O1 && C2 < O2 && O2 >= C1 && C2 <= O1) {
+            candlePattern = "🐻 Bearish Engulfing";
+        } else if (upperWick >= 2 * body && lowerWick <= body * 0.5 && body > 0) {
+            candlePattern = "🌠 Shooting Star (Bearish)";
+        }
 
         let side = "", emoji = "", strength = "Standard", priority = 3, adxStatus = "";
 
@@ -143,6 +170,7 @@ async function analyzeCoin(coinObj, timeframe) {
                 rsiTrend: lastRsi > prevRsi ? "⬆️ Rising" : "⬇️ Falling",
                 change: coinObj.change,
                 volSpike: volSpike ? "🔥 VOLUME SPIKE!" : "Normal",
+                candlePattern: candlePattern, // Newly added Candle Pattern
                 adxStatus,
                 side,
                 emoji,
@@ -165,7 +193,7 @@ async function run() {
         const coins = await getFilteredPairs();
         let allSignals = [];
 
-        await bot.sendMessage(chatId, `🔍 *Professional Scanner v3.0 Started*\nChecking ADX, Multi-TF, Whales & Auto TP/SL...\nTotal Coins: ${coins.length}`);
+        await bot.sendMessage(chatId, `🔍 *Professional Scanner v3.1 Started*\nChecking ADX, Multi-TF, Whales, Auto TP/SL & Candles...\nTotal Coins: ${coins.length}`);
 
         for (const tf of timeframes) {
             for (const coinObj of coins) {
@@ -194,6 +222,7 @@ ${s.emoji} *${s.side}*
 📈 *RSI:* ${s.rsi.toFixed(2)} (${s.rsiTrend})
 📉 *Strength:* ${s.strength}
 ⚡ *Vol Surge:* ${s.volSpike}
+🕯️ *Candle Pattern:* ${s.candlePattern}
 📊 *24h Change:* ${s.change}%
 🪙 *Coin:* #${s.symbol}
 ⏰ *TF:* ${s.timeframe} | 💰 *Price:* ${s.price}

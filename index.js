@@ -58,6 +58,10 @@ async function analyzeCoin(coinObj, timeframe) {
         const lastRsi = rsiArr[rsiArr.length - 1];
         const prevRsi = rsiArr[rsiArr.length - 2];
 
+        // Strict Filter checks for RSI Direction
+        const isRsiRising = lastRsi > prevRsi;
+        const isRsiFalling = lastRsi < prevRsi;
+
         const adxArr = ADX.calculate({ high: highPrices, low: lowPrices, close: closePrices, period: 14 });
         if (!lastRsi || adxArr.length < 2) return null;
 
@@ -102,11 +106,13 @@ async function analyzeCoin(coinObj, timeframe) {
         if (lastRsi >= 10 && lastRsi <= 30) {
             side = "LONG Opportunity"; emoji = "🟢";
             if (lastRsi <= 20) { strength = "Extreme Oversold"; priority = 1; }
-            adxStatus = isExhausted ? "🔥 SELLERS EXHAUSTED (Sniper Entry)" : "⚠️ Falling Knife (High Risk, Wait)";
+            // STRICT FILTER: ADX exhausted AND RSI must be rising
+            adxStatus = (isExhausted && isRsiRising) ? "🔥 SELLERS EXHAUSTED (Sniper Entry)" : "⚠️ Falling Knife (High Risk, Wait)";
         } else if (lastRsi >= 70 && lastRsi <= 100) {
             side = "SHORT Opportunity"; emoji = "🔴";
             if (lastRsi >= 80) { strength = "Extreme Overbought"; priority = 1; }
-            adxStatus = isExhausted ? "🔥 BUYERS EXHAUSTED (Sniper Entry)" : "⚠️ Still Pumping (High Risk, Wait)";
+            // STRICT FILTER: ADX exhausted AND RSI must be falling
+            adxStatus = (isExhausted && isRsiFalling) ? "🔥 BUYERS EXHAUSTED (Sniper Entry)" : "⚠️ Still Pumping (High Risk, Wait)";
         }
 
         if (side) {
@@ -167,7 +173,7 @@ async function analyzeCoin(coinObj, timeframe) {
                 timeframe,
                 price: lastPrice,
                 rsi: lastRsi,
-                rsiTrend: lastRsi > prevRsi ? "⬆️ Rising" : "⬇️ Falling",
+                rsiTrend: isRsiRising ? "⬆️ Rising" : "⬇️ Falling",
                 change: coinObj.change,
                 volSpike: volSpike ? "🔥 VOLUME SPIKE!" : "Normal",
                 candlePattern: candlePattern, // Newly added Candle Pattern

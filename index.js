@@ -58,7 +58,6 @@ async function analyzeCoin(coinObj, timeframe) {
         const lastRsi = rsiArr[rsiArr.length - 1];
         const prevRsi = rsiArr[rsiArr.length - 2];
 
-        // Strict Filter checks for RSI Direction
         const isRsiRising = lastRsi > prevRsi;
         const isRsiFalling = lastRsi < prevRsi;
 
@@ -69,7 +68,6 @@ async function analyzeCoin(coinObj, timeframe) {
         const prevAdx = adxArr[adxArr.length - 2].adx;
         const isExhausted = prevAdx > 25 && lastAdx < prevAdx;
 
-        // ATR Calculation for Auto TP & SL
         const atrArr = ATR.calculate({ high: highPrices, low: lowPrices, close: closePrices, period: 14 });
         const lastAtr = atrArr[atrArr.length - 1];
 
@@ -88,13 +86,11 @@ async function analyzeCoin(coinObj, timeframe) {
         
         let candlePattern = "Normal";
         
-        // Bullish Patterns (for LONG)
         if (C1 < O1 && C2 > O2 && O2 <= C1 && C2 >= O1) {
             candlePattern = "🐂 Bullish Engulfing";
         } else if (lowerWick >= 2 * body && upperWick <= body * 0.5 && body > 0) {
             candlePattern = "🔨 Hammer (Bullish)";
         } 
-        // Bearish Patterns (for SHORT)
         else if (C1 > O1 && C2 < O2 && O2 >= C1 && C2 <= O1) {
             candlePattern = "🐻 Bearish Engulfing";
         } else if (upperWick >= 2 * body && lowerWick <= body * 0.5 && body > 0) {
@@ -103,23 +99,30 @@ async function analyzeCoin(coinObj, timeframe) {
 
         let side = "", emoji = "", strength = "Standard", priority = 3, adxStatus = "";
 
+        // --- STRICT FILTER LOGIC (ONLY PERFECT SIGNALS) ---
         if (lastRsi >= 10 && lastRsi <= 30) {
-            side = "LONG Opportunity"; emoji = "🟢";
-            if (lastRsi <= 20) { strength = "Extreme Oversold"; priority = 1; }
-            // STRICT FILTER: ADX exhausted AND RSI must be rising
-            adxStatus = (isExhausted && isRsiRising) ? "🔥 SELLERS EXHAUSTED (Sniper Entry)" : "⚠️ Falling Knife (High Risk, Wait)";
-        } else if (lastRsi >= 70 && lastRsi <= 100) {
-            side = "SHORT Opportunity"; emoji = "🔴";
-            if (lastRsi >= 80) { strength = "Extreme Overbought"; priority = 1; }
-            // STRICT FILTER: ADX exhausted AND RSI must be falling
-            adxStatus = (isExhausted && isRsiFalling) ? "🔥 BUYERS EXHAUSTED (Sniper Entry)" : "⚠️ Still Pumping (High Risk, Wait)";
+            if (isExhausted && isRsiRising) {
+                side = "LONG Opportunity"; emoji = "🟢";
+                if (lastRsi <= 20) { strength = "Extreme Oversold"; priority = 1; }
+                adxStatus = "🔥 SELLERS EXHAUSTED (Sniper Entry)";
+            } else {
+                return null; // SILENT REJECT: It's a falling knife, do not send message.
+            }
+        } 
+        else if (lastRsi >= 70 && lastRsi <= 100) {
+            if (isExhausted && isRsiFalling) {
+                side = "SHORT Opportunity"; emoji = "🔴";
+                if (lastRsi >= 80) { strength = "Extreme Overbought"; priority = 1; }
+                adxStatus = "🔥 BUYERS EXHAUSTED (Sniper Entry)";
+            } else {
+                return null; // SILENT REJECT: It's still pumping, do not send message.
+            }
         }
 
         if (side) {
             const base = symbol.split('/')[0];
             if (priority !== 1 && majorCoins.includes(`${base}/USDT`)) priority = 2;
 
-            // 1. Auto TP & SL Logic
             let sl, tp1, tp2;
             if (side.includes("LONG")) {
                 sl = lastPrice - (lastAtr * 1.5);
@@ -131,7 +134,6 @@ async function analyzeCoin(coinObj, timeframe) {
                 tp2 = lastPrice - (lastAtr * 3.0);
             }
 
-            // 2. Whale Tracker (Funding Rate Logic)
             let whaleAlert = "Normal";
             try {
                 const funding = await exchange.fetchFundingRate(symbol);
@@ -147,7 +149,6 @@ async function analyzeCoin(coinObj, timeframe) {
                 }
             } catch (e) { whaleAlert = "N/A"; }
 
-            // 4. Multi-Timeframe Match (Check HTF)
             let mtfStatus = "N/A";
             let htf = timeframe === '4h' ? '1d' : (timeframe === '1d' ? '1w' : null);
             if (htf) {
@@ -176,7 +177,7 @@ async function analyzeCoin(coinObj, timeframe) {
                 rsiTrend: isRsiRising ? "⬆️ Rising" : "⬇️ Falling",
                 change: coinObj.change,
                 volSpike: volSpike ? "🔥 VOLUME SPIKE!" : "Normal",
-                candlePattern: candlePattern, // Newly added Candle Pattern
+                candlePattern: candlePattern, 
                 adxStatus,
                 side,
                 emoji,
@@ -199,7 +200,7 @@ async function run() {
         const coins = await getFilteredPairs();
         let allSignals = [];
 
-        await bot.sendMessage(chatId, `🔍 *Professional Scanner v3.1 Started*\nChecking ADX, Multi-TF, Whales, Auto TP/SL & Candles...\nTotal Coins: ${coins.length}`);
+        await bot.sendMessage(chatId, `🔍 *Ultra-Pro Scanner Started*\nTarget: Only 100% PERFECT Sniper Entries...\nTotal Coins: ${coins.length}`);
 
         for (const tf of timeframes) {
             for (const coinObj of coins) {
@@ -212,7 +213,7 @@ async function run() {
         allSignals.sort((a, b) => a.priority - b.priority);
 
         if (allSignals.length === 0) {
-            await bot.sendMessage(chatId, "✅ Scan complete. No signals found.");
+            await bot.sendMessage(chatId, "✅ Scan complete. Market is risky right now. No perfect signals found. I'll keep watching!");
             return;
         }
 
@@ -244,7 +245,7 @@ ${s.emoji} *${s.side}*
         const longCount = allSignals.filter(s => s.side.includes("LONG")).length;
         const shortCount = allSignals.filter(s => s.side.includes("SHORT")).length;
 
-        await bot.sendMessage(chatId, `✅ *Scan Report Summary*\nTotal Signals: ${allSignals.length}\n🟢 Longs: ${longCount} | 🔴 Shorts: ${shortCount}`);
+        await bot.sendMessage(chatId, `✅ *Scan Report Summary*\nPerfect Signals: ${allSignals.length}\n🟢 Longs: ${longCount} | 🔴 Shorts: ${shortCount}`);
     } catch (error) { console.error(error.message); }
 }
 
